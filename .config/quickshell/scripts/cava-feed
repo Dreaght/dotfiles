@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${1:?config path required}"
+FRAME_FILE="${2:?frame file path required}"
+
+mkdir -p "$(dirname "$FRAME_FILE")"
+: >"$FRAME_FILE"
+
+stdbuf -oL cava -p "$CONFIG_FILE" | while IFS= read -r line; do
+  printf '%s\n' "$line" >"$FRAME_FILE"
+done

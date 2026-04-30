@@ -1,0 +1,13 @@
+[Unit]
+Description=Quickshell media panel
+After=graphical-session.target docksync-waybar.service
+Wants=docksync-waybar.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs --path /home/dreaght/.config/quickshell --no-duplicate
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

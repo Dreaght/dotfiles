@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/waybar-docksync"
+STATE_FILE="$CACHE_DIR/state.json"
+CONTROL_FIFO="$CACHE_DIR/control.fifo"
+COVER_FILE="$CACHE_DIR/cover.jpg"
+
+ensure_paths() {
+  mkdir -p "$CACHE_DIR"
+  if [[ ! -p "$CONTROL_FIFO" ]]; then
+    rm -f "$CONTROL_FIFO"
+    mkfifo -m 600 "$CONTROL_FIFO"
+  fi
+}
+
+init_state() {
+  ensure_paths
+  if [[ ! -f "$STATE_FILE" ]]; then
+    cat >"$STATE_FILE" <<EOF
+{"connected":false,"liked":null,"cover_url":"","cover_path":"","updated_at":0}
+EOF
+  fi
+}
+
+write_state() {
+  local tmp
+  tmp=$(mktemp "$CACHE_DIR/state.XXXXXX")
+  jq "$@" "$STATE_FILE" >"$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+send_control() {
+  local command=${1:-}
+  ensure_paths
+  if [[ -z "$command" || ! -p "$CONTROL_FIFO" ]]; then
+    return 0
+  fi
+  timeout 0.2 bash -c 'printf "%s\n" "$1" > "$2"' _ "$command" "$CONTROL_FIFO" 2>/dev/null || true
+}
+
+download_cover() {
+  local url=${1:-}
+  local tmp
+
+  [[ -n "$url" ]] || return 0
+  tmp=$(mktemp "$CACHE_DIR/cover.XXXXXX")
+  if curl -fsSL "$url" -o "$tmp"; then
+    mv "$tmp" "$COVER_FILE"
+  else
+    rm -f "$tmp"
+  fi
+}
+
+cleanup_handler() {
+  rm -f "$COVER_FILE"
+  write_state '.connected = false | .liked = null | .cover_url = "" | .cover_path = "" | .updated_at = now'
+}
+
+handle_message() {
+  local line=${1:-}
+  local request
+  request=$(jq -r '.request // empty' <<<"$line" 2>/dev/null || true)
+  [[ -n "$request" ]] || return 0
+
+  case "$request" in
+    likeState)
+      local liked
+      liked=$(jq -r '.response // empty' <<<"$line" 2>/dev/null || true)
+      if [[ "$liked" == "0" || "$liked" == "1" ]]; then
+        write_state ".connected = true | .liked = ($liked | tonumber) | .updated_at = now"
+      fi
+      ;;
+    coverImage)
+      local url
+      url=$(jq -r '.response // empty' <<<"$line" 2>/dev/null || true)
+      if [[ "$url" == http://* ]]; then
+        download_cover "$url"
+        write_state --arg url "$url" --arg path "$COVER_FILE" '.connected = true | .cover_url = $url | .cover_path = $path | .updated_at = now'
+      else
+        rm -f "$COVER_FILE"
+        write_state '.cover_url = "" | .cover_path = "" | .updated_at = now'
+      fi
+      ;;
+  esac
+}
+
+emit_requests() {
+  local now next_like next_cover
+
+  exec 3<>"$CONTROL_FIFO"
+
+  printf '%s\n' '{"request":"device"}'
+  printf '%s\n' '{"request":"likeState"}'
+  printf '%s\n' '{"request":"coverImage"}'
+  next_like=$((SECONDS + 5))
+  next_cover=$((SECONDS + 30))
+
+  while true; do
+    if read -r -t 1 command <&3; then
+      case "$command" in
+        likeInteraction|likeState|coverImage)
+          printf '{"request":"%s"}\n' "$command"
+          ;;
+        refresh)
+          printf '%s\n' '{"request":"likeState"}'
+          printf '%s\n' '{"request":"coverImage"}'
+          ;;
+      esac
+    fi
+
+    now=$SECONDS
+    if (( now >= next_like )); then
+      printf '%s\n' '{"request":"likeState"}'
+      next_like=$((now + 5))
+    fi
+    if (( now >= next_cover )); then
+      printf '%s\n' '{"request":"coverImage"}'
+      next_cover=$((now + 30))
+    fi
+  done
+}
+
+run_handler() {
+  init_state
+  write_state '.connected = true | .updated_at = now'
+  trap cleanup_handler EXIT INT TERM HUP
+
+  emit_requests &
+  local emitter_pid=$!
+
+  while IFS= read -r line; do
+    handle_message "$line"
+  done
+
+  kill "$emitter_pid" 2>/dev/null || true
+  wait "$emitter_pid" 2>/dev/null || true
+}
+
+run_daemon() {
+  init_state
+  exec websocat -E -t --conncap 1 ws-l:127.0.0.1:8765 sh-c:"$CONFIG_DIR/scripts/docksync-helper handler"
+}
+
+music_module() {
+  local status artist title album text tooltip classes
+
+  status=$(playerctl metadata --format '{{status}}' 2>/dev/null || true)
+  title=$(playerctl metadata --format '{{title}}' 2>/dev/null || true)
+  artist=$(playerctl metadata --format '{{artist}}' 2>/dev/null || true)
+  album=$(playerctl metadata --format '{{album}}' 2>/dev/null || true)
+
+  if [[ -z "$title" ]]; then
+    jq -cn '{text:"",tooltip:"No active MPRIS player",class:["music","idle"]}'
+    return 0
+  fi
+
+  case "$status" in
+    Playing)
+      classes='["music","playing"]'
+      ;;
+    Paused)
+      classes='["music","paused"]'
+      ;;
+    *)
+      classes='["music","idle"]'
+      ;;
+  esac
+
+  if [[ -n "$artist" ]]; then
+    text="$artist - $title"
+  else
+    text="$title"
+  fi
+
+  tooltip="$title"
+  if [[ -n "$artist" ]]; then
+    tooltip="$artist\n$title"
+  fi
+  if [[ -n "$album" ]]; then
+    tooltip="$tooltip\n$album"
+  fi
+
+  jq -cn --arg text "$text" --arg tooltip "$tooltip" --argjson class "$classes" \
+    '{text:$text,tooltip:$tooltip,class:$class}'
+}
+
+like_module() {
+  init_state
+  send_control likeState
+
+  local connected liked text tooltip classes
+  connected=$(jq -r '.connected // false' "$STATE_FILE")
+  liked=$(jq -r '.liked // empty' "$STATE_FILE")
+
+  if [[ "$connected" != "true" ]]; then
+    jq -cn '{text:"",tooltip:"DockSync is waiting for Yandex Music",class:["like","hidden"]}'
+    return 0
+  elif [[ "$liked" == "1" ]]; then
+    text="󰋑"
+    tooltip="Track is liked"
+    classes='["like","liked"]'
+  else
+    text="󰋎"
+    tooltip="Track is not liked"
+    classes='["like","unliked"]'
+  fi
+
+  jq -cn --arg text "$text" --arg tooltip "$tooltip" --argjson class "$classes" \
+    '{text:$text,tooltip:$tooltip,class:$class}'
+}
+
+play_module() {
+  local status icon tooltip classes
+
+  status=$(playerctl status 2>/dev/null || true)
+  case "$status" in
+    Playing)
+      icon="󰏤"
+      tooltip="Pause"
+      classes='["transport","playing"]'
+      ;;
+    Paused)
+      icon="󰐊"
+      tooltip="Play"
+      classes='["transport","paused"]'
+      ;;
+    *)
+      icon="󰐊"
+      tooltip="Play"
+      classes='["transport","idle"]'
+      ;;
+  esac
+
+  jq -cn --arg text "$icon" --arg tooltip "$tooltip" --argjson class "$classes" \
+    '{text:$text,tooltip:$tooltip,class:$class}'
+}
+
+cover_module() {
+  init_state
+  send_control coverImage
+
+  local connected cover_path tooltip
+  connected=$(jq -r '.connected // false' "$STATE_FILE")
+  if [[ "$connected" != "true" ]]; then
+    return 0
+  fi
+
+  cover_path=$(jq -r '.cover_path // empty' "$STATE_FILE")
+
+  if [[ -n "$cover_path" && -f "$cover_path" ]]; then
+    tooltip=$(playerctl metadata --format '{{artist}}\n{{title}}' 2>/dev/null || true)
+    printf '%s\n%s\n' "$cover_path" "$tooltip"
+  fi
+}
+
+case "${1:-}" in
+  daemon)
+    run_daemon
+    ;;
+  handler)
+    run_handler
+    ;;
+  music-module)
+    music_module
+    ;;
+  like-module)
+    like_module
+    ;;
+  play-module)
+    play_module
+    ;;
+  cover-module)
+    cover_module
+    ;;
+  send)
+    send_control "${2:-}"
+    ;;
+  *)
+    echo "usage: $0 {daemon|handler|music-module|like-module|play-module|cover-module|send <command>}" >&2
+    exit 1
+    ;;
+esac
