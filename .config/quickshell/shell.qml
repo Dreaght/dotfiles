@@ -44,6 +44,10 @@ ShellRoot {
     activePlayer = pickPlayer();
   }
 
+  function hasActivePlayer() {
+    return activePlayer !== null;
+  }
+
   function updateSpectrum(frame) {
     const parts = frame.trim().split(";");
     const values = [];
@@ -227,7 +231,7 @@ ShellRoot {
 
   PanelWindow {
     id: panel
-    visible: Quickshell.screens.length > 0
+    visible: Quickshell.screens.length > 0 && root.hasActivePlayer()
     screen: Quickshell.screens[0]
     anchors {
       top: true
