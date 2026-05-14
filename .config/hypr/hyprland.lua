@@ -1,0 +1,6 @@
+require("monitors")
+require("binds")
+require("windows")
+require("visuals")
+require("permissions")
+require("misc")
