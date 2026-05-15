@@ -22,6 +22,7 @@ hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(programs.lock))
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(programs.terminal))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(programs.fileManager))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(programs.menu))
+hl.bind(mainMod .. " + F", hl.dsp.exec_cmd(programs.browser))
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd(programs.clipboard))
 
 -- Move focus with mainMod + arrow keys
