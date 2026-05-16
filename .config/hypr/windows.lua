@@ -1,7 +1,9 @@
 local suppressMaximizeRule = hl.window_rule({
     -- Ignore maximize requests from all apps. You'll probably like this.
     name  = "suppress-maximize-events",
-    match = { class = ".*" },
+    -- JetBrains welcome windows often re-request maximize after closing a project.
+    -- Let those events through so the window can resize itself properly.
+    match = { class = "negative:^jetbrains-.*$" },
 
     suppress_event = "maximize",
 })
@@ -39,8 +41,8 @@ hl.window_rule({ match = { class = "firefox" }, no_blur = true })
 hl.window_rule({
   name = "jetbrains",
   match = {
-    class = "jetbrains-*",
-    title = "Welcome to *",
+    class = "^jetbrains-.*$",
+    title = "^Welcome to .*$",
   },
   maximize = true,
 })
