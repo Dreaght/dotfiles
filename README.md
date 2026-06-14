@@ -20,6 +20,8 @@ Personal dotfiles repository for the Hyprland desktop and Quickshell music panel
   - local WebSocket helper used by the Yandex Music DockSync addon
 - `.config/quickshell/scripts/docksync-helper`
   - DockSync state/cache helper script used by the Quickshell setup
+- `.config/git/`
+  - Global git settings
 
 ## Apply
 
