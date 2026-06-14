@@ -1,4 +1,6 @@
 *
 !.config/
 !.config/**
+!.cargo/
+!.cargo/**
 !README.md
