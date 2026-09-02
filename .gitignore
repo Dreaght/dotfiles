@@ -3,4 +3,6 @@
 !.config/**
 !.cargo/
 !.cargo/**
+!.rustup/
+!.rustup/**
 !README.md
