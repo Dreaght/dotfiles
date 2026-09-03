@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="${LOCAL_FLATPAK_REPO_DIR:-$HOME/.local/share/flatpak-repos/local}"
+REMOTE_NAME="${LOCAL_FLATPAK_REMOTE_NAME:-local-flatpaks}"
+
+mkdir -p "$REPO_DIR"
+
+if [ ! -f "$REPO_DIR/config" ]; then
+  ostree --repo="$REPO_DIR" init --mode=archive-z2
+fi
+
+flatpak build-update-repo "$REPO_DIR" >/dev/null
+flatpak remote-add --if-not-exists --user --no-gpg-verify "$REMOTE_NAME" "$REPO_DIR"
+
+printf 'Local Flatpak root: %s\n' "$ROOT_DIR"
+printf 'Local OSTree repo: %s\n' "$REPO_DIR"
+printf 'Flatpak remote: %s\n' "$REMOTE_NAME"

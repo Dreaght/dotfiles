@@ -1,0 +1,52 @@
+app-id: ru.yandex.Music
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: yandex-music
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=pulseaudio
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --own-name=org.mpris.MediaPlayer2.chromium.*
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+
+modules:
+  - name: yandex-music
+    buildsystem: simple
+    build-commands:
+      - ar x yandex-music.deb
+      - tar -xf data.tar.xz
+      - mv 'opt/Яндекс Музыка' opt/yandex-music || true
+      - install -d /app/bin /app/opt /app/share/applications /app/share/icons /app/share/metainfo
+      - cp -a opt/yandex-music /app/opt/
+      - install -Dm755 yandex-music-wrapper.sh /app/bin/yandex-music
+      - desktop_file="$(find usr/share/applications -name '*.desktop' | head -n1)"
+        && install -Dm644 "$desktop_file" /app/share/applications/ru.yandex.Music.desktop
+      - sed -i 's|^Exec=.*|Exec=yandex-music %U|' /app/share/applications/ru.yandex.Music.desktop
+      - sed -i 's|^Icon=.*|Icon=ru.yandex.Music|' /app/share/applications/ru.yandex.Music.desktop
+      - sed -i 's|^Categories=Audio;|Categories=AudioVideo;Audio;|' /app/share/applications/ru.yandex.Music.desktop
+      - |
+        find usr/share/icons/hicolor -type f -name 'yandexmusic.png' | while read -r icon; do
+          size="$(basename "$(dirname "$(dirname "$icon")")")"
+          install -Dm644 "$icon" "/app/share/icons/hicolor/${size}/apps/ru.yandex.Music.png"
+        done
+      - install -Dm644 ru.yandex.Music.metainfo.xml /app/share/metainfo/ru.yandex.Music.metainfo.xml
+    sources:
+      - type: file
+        url: https://desktop.app.music.yandex.net/stable/Yandex_Music_amd64_5.117.1.deb
+        dest-filename: yandex-music.deb
+        sha256: 85391bdafc9ccaa54367e1dfad863348b09b4ec17bc9a98d3d304c2a4a137e4f
+        x-checker-data:
+          type: json
+          url: https://desktop.app.music.yandex.net/stable/download.json
+          version-query: .linux | capture("_(?<version>[0-9.]+)\\.deb$").version
+          url-query: .linux
+      - type: file
+        path: yandex-music-wrapper.sh
+      - type: file
+        path: ru.yandex.Music.metainfo.xml

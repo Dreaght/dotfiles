@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+APPS_DIR="${LOCAL_FLATPAK_APPS_DIR:-$ROOT_DIR/apps}"
+REPO_DIR="${LOCAL_FLATPAK_REPO_DIR:-$HOME/.local/share/flatpak-repos/local}"
+BUILD_ROOT="${LOCAL_FLATPAK_BUILD_ROOT:-$HOME/.cache/local-flatpak-builder}"
+CHECKER_APP="${LOCAL_FLATPAK_CHECKER_APP:-org.flathub.flatpak-external-data-checker}"
+REMOTE_NAME="${LOCAL_FLATPAK_REMOTE_NAME:-local-flatpaks}"
+BRANCH="${LOCAL_FLATPAK_BRANCH:-stable}"
+
+log() {
+  printf '[local-flatpaks] %s\n' "$*"
+}
+
+extract_app_id() {
+  local manifest="$1"
+  local app_id
+
+  app_id="$(sed -nE 's/^app-id:[[:space:]]*//p' "$manifest" | head -n1)"
+  if [ -z "$app_id" ]; then
+    app_id="$(sed -nE 's/^[[:space:]]*"app-id":[[:space:]]*"([^"]+)".*/\1/p' "$manifest" | head -n1)"
+  fi
+
+  if [ -z "$app_id" ]; then
+    log "Could not determine app-id from $manifest"
+    return 1
+  fi
+
+  printf '%s\n' "$app_id"
+}
+
+ensure_repo() {
+  mkdir -p "$REPO_DIR" "$BUILD_ROOT"
+  if [ ! -f "$REPO_DIR/config" ]; then
+    log "Initializing OSTree repo at $REPO_DIR"
+    ostree --repo="$REPO_DIR" init --mode=archive-z2
+  fi
+
+  flatpak build-update-repo "$REPO_DIR" >/dev/null
+  flatpak remote-add --if-not-exists --user --no-gpg-verify "$REMOTE_NAME" "$REPO_DIR" >/dev/null
+}
+
+run_checker() {
+  local manifest="$1"
+  local before after
+
+  before="$(sha256sum "$manifest" | awk '{print $1}')"
+  flatpak run --filesystem="$ROOT_DIR" --filesystem="$HOME/.cache" "$CHECKER_APP" --update "$manifest" >/dev/null
+  after="$(sha256sum "$manifest" | awk '{print $1}')"
+
+  if [ "$before" != "$after" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+build_manifest() {
+  local manifest="$1"
+  local app_id build_dir
+
+  app_id="$(extract_app_id "$manifest")"
+  build_dir="$BUILD_ROOT/$app_id"
+
+  log "Building $app_id"
+  flatpak-builder --force-clean "$build_dir" "$manifest" >/dev/null
+  log "Exporting $app_id"
+  flatpak build-export "$REPO_DIR" "$build_dir" "$BRANCH" >/dev/null
+}
+
+ensure_repo
+
+if ! flatpak info "$CHECKER_APP" >/dev/null 2>&1; then
+  log "Missing $CHECKER_APP. Install it with: flatpak install flathub $CHECKER_APP"
+  exit 1
+fi
+
+mapfile -t manifests < <(find "$APPS_DIR" -mindepth 2 -maxdepth 2 -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) | sort)
+
+if [ "${#manifests[@]}" -eq 0 ]; then
+  log "No manifests found under $APPS_DIR"
+  exit 0
+fi
+
+built_any=0
+
+for manifest in "${manifests[@]}"; do
+  app_id="$(extract_app_id "$manifest")"
+  if run_checker "$manifest"; then
+    log "Upstream update detected for $app_id"
+    build_manifest "$manifest"
+    built_any=1
+    continue
+  fi
+
+  if ! ostree --repo="$REPO_DIR" refs | rg -qx "app/$app_id/.*/$BRANCH"; then
+    log "No published ref for $app_id yet"
+    build_manifest "$manifest"
+    built_any=1
+  else
+    log "$app_id is already current"
+  fi
+done
+
+if [ "$built_any" -eq 1 ]; then
+  log "Updating repo summary"
+  flatpak build-update-repo "$REPO_DIR" >/dev/null
+else
+  log "Nothing changed"
+fi
