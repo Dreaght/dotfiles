@@ -46,3 +46,9 @@ hl.window_rule({
   },
   maximize = true,
 })
+
+hl.window_rule({
+    match = { class = "^(org.qbittorrent.qBittorrent)$" },
+    workspace = "10 silent"
+})
+
