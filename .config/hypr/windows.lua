@@ -24,27 +24,15 @@ hl.window_rule({
     no_focus = true,
 })
 
-hl.window_rule({
-  name = "gsr-ui-windowed-fullscreen",
-  match = { class = "^gsr-ui$" },
- 
-  float = true,
-  no_blur = true,
-  move = {0, 0},
-  size = "monitor_w monitor_h",
-  fullscreen_state = "0 2",
-  sync_fullscreen = false
-})
-
 hl.window_rule({ match = { class = "firefox" }, no_blur = true })
 
+-- Fix jetbrains IDEs
 hl.window_rule({
-  name = "jetbrains",
-  match = {
-    class = "^jetbrains-.*$",
-    title = "^Welcome to .*$",
-  },
-  maximize = true,
+    match = {
+        initial_class = "^jetbrains-.*",
+        initial_title = "^Welcome to .*",
+    },
+    suppress_event = "fullscreen"
 })
 
 hl.window_rule({
