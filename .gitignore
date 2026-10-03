@@ -7,4 +7,5 @@
 !.rustup/**
 !local-flatpaks
 !local-flatpaks/**
+!rsync.sh
 !README.md
